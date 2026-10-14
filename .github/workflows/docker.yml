@@ -1,0 +1,54 @@
+name: Docker build
+
+# Запускается только после того, как CI успешно завершился
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+
+    steps:
+      # Берём артефакт, который сохранил CI (а не пересобираем из исходников)
+      - name: Download CI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: calculator-build
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Unpack artifact
+        run: |
+          mkdir build
+          tar -xzf calculator-build.tar.gz -C build
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # cache-from/cache-to: слои образа кэшируются в GitHub,
+      # неизменившиеся слои не пересобираются и не скачиваются заново
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: build
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/calculator:latest
+            ghcr.io/${{ github.repository_owner }}/calculator:${{ github.event.workflow_run.head_sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
